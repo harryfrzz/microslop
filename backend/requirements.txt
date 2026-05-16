@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+pillow
+pytesseract
+lancedb
+requests
+numpy
+opencv-python
+sentence-transformers
+torch
+transformers
+onnxruntime
