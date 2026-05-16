@@ -22,6 +22,8 @@ SQLite metadata + LanceDB vectors + local screenshot files
 Hybrid search + Gemma 4 E2B grounded answers through Ollama
 ```
 
+OCR could be moved into the Gemma4 inference pipeline in the future, but the current implementation uses Tesseract so text extraction stays fast and lightweight before embeddings and answer generation run.
+
 ## Local Storage
 
 ```text
