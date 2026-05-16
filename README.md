@@ -38,6 +38,20 @@ app-data/
 
 The app exposes the storage location in Settings and Privacy. Delete controls remove SQLite records, LanceDB vectors, screenshots, and thumbnails.
 
+## One-command Setup
+
+```bash
+./setup.sh
+```
+
+The setup script installs Tesseract and Ollama when possible, creates the backend Python virtualenv, installs backend and frontend dependencies, starts `ollama serve`, pulls `nomic-embed-text` and `gemma4:e2b`, starts the FastAPI backend, and launches the Electron app.
+
+You can override defaults with environment variables:
+
+```bash
+MICROSLOP_BACKEND_PORT=8765 OLLAMA_MODEL=gemma4:e2b TEXT_EMBEDDING_MODEL=nomic-embed-text ./setup.sh
+```
+
 ## Backend Setup
 
 ```bash
