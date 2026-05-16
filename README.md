@@ -40,11 +40,21 @@ The app exposes the storage location in Settings and Privacy. Delete controls re
 
 ## One-command Setup
 
+From the project root, make the script executable once:
+
+```bash
+chmod +x setup.sh
+```
+
+Then run it:
+
 ```bash
 ./setup.sh
 ```
 
 The setup script installs Tesseract and Ollama when possible, creates the backend Python virtualenv, installs backend and frontend dependencies, starts `ollama serve`, pulls `nomic-embed-text` and `gemma4:e2b`, starts the FastAPI backend, and launches the Electron app.
+
+Keep the terminal open while using the app. Press `Ctrl+C` in that terminal to stop the Electron app and the backend process started by the script.
 
 You can override defaults with environment variables:
 
