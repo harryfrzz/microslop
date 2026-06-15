@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowUp, House, MessageSquare, MonitorPlay, MonitorStop, PanelLeft, Paperclip, Plug, Search, Settings as SettingsIcon, Shield, SquarePen, Trash2 } from 'lucide-react';
+import { ArrowUp, ChevronDown, House, MessageSquare, MonitorPlay, MonitorStop, PanelLeft, Paperclip, Plug, Settings as SettingsIcon, SquarePen, Terminal, Trash2 } from 'lucide-react';
 import './index.css';
 import {
   deleteAllData,
@@ -19,6 +19,8 @@ import type { SearchResult, Settings, Status } from './renderer/types';
 
 type ChatMessage = { role: 'user' | 'assistant'; content: string; results?: SearchResult[] };
 type Chat = { id: string; title: string; messages: ChatMessage[] };
+type LogLevel = 'info' | 'error';
+type LogEntry = { time: string; level: LogLevel; text: string };
 
 const blankSettings: Settings = {
   captureEnabled: false,
@@ -36,32 +38,23 @@ const blankSettings: Settings = {
 
 const MODEL_OPTIONS = ['llama-3.3-70b', 'llama3.1-8b', 'llama-4-scout-17b-16e-instruct', 'qwen-3-32b'];
 
+const SEARCH_MODE = 'hybrid';
+const SEARCH_FILTERS = { dateFrom: null, dateTo: null, appName: '', windowTitle: '' };
+
 const NAV = [
   { id: 'dashboard', label: 'Home', Icon: House },
-  { id: 'search', label: 'Search', Icon: Search },
   { id: 'settings', label: 'Settings', Icon: SettingsIcon },
-  { id: 'privacy', label: 'Privacy', Icon: Shield },
 ] as const;
 
 const fileUrl = (path?: string) => (path ? `file://${path}` : undefined);
 const prettyBytes = (bytes = 0) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const prettyTime = (value?: string | null) => (value ? new Date(value).toLocaleString() : 'Never');
 
-function Pill({ label, value }: { label: string; value: string }) {
-  return <span className={`pill ${value === 'ok' ? 'ok' : 'bad'}`}>{label}: {value}</span>;
-}
-
 function App() {
-  const [page, setPage] = useState<'dashboard' | 'search' | 'settings' | 'privacy'>('dashboard');
+  const [page, setPage] = useState<'dashboard' | 'settings'>('dashboard');
   const [status, setStatus] = useState<Status | null>(null);
   const [settings, setSettings] = useState<Settings>(blankSettings);
-  const [backendError, setBackendError] = useState('');
   const [query, setQuery] = useState('');
-  const [mode, setMode] = useState('hybrid');
-  const [filters, setFilters] = useState({ dateFrom: null, dateTo: null, appName: '', windowTitle: '' });
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [answer, setAnswer] = useState('');
-  const [message, setMessage] = useState('');
   const [preview, setPreview] = useState<SearchResult | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
@@ -70,20 +63,30 @@ function App() {
   const [collapsed, setCollapsed] = useState(false);
   const [sending, setSending] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logsOpen, setLogsOpen] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
+  const logBodyRef = useRef<HTMLDivElement>(null);
+  const backendOk = useRef<boolean | null>(null);
 
   const activeChat = chats.find((chat) => chat.id === activeChatId) ?? null;
   const messages = activeChat?.messages ?? [];
+
+  const log = (text: string, level: LogLevel = 'info') => {
+    setLogs((current) => [...current, { time: new Date().toLocaleTimeString(), level, text }].slice(-400));
+  };
 
   const refresh = async () => {
     try {
       const [nextStatus, nextSettings] = await Promise.all([getStatus(), getSettings()]);
       setStatus(nextStatus);
       setSettings((current) => ({ ...current, ...nextSettings }));
-      setBackendError('');
+      if (backendOk.current !== true) log('Backend connected on 127.0.0.1:8765');
+      backendOk.current = true;
     } catch {
-      setBackendError('FastAPI backend is not running. Start it with `uvicorn main:app --host 127.0.0.1 --port 8765 --reload`.');
+      if (backendOk.current !== false) log('Backend unreachable. Start it: uvicorn main:app --host 127.0.0.1 --port 8765 --reload', 'error');
+      backendOk.current = false;
     }
   };
 
@@ -97,11 +100,15 @@ function App() {
     chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight });
   }, [messages, sending]);
 
+  useEffect(() => {
+    if (logsOpen) logBodyRef.current?.scrollTo({ top: logBodyRef.current.scrollHeight });
+  }, [logs, logsOpen]);
+
   const startCapture = async () => {
     await resumeCapture().catch((): null => null);
     const result = await window.microslop?.startCapture();
     setSettings((current) => ({ ...current, captureEnabled: Boolean(result?.captureEnabled) }));
-    setMessage('Capture loop started. Screenshots stay local and are indexed by the backend.');
+    log(`Capture started (every ${result?.captureIntervalSeconds ?? settings.captureIntervalSeconds}s)`);
     void refresh();
   };
 
@@ -109,26 +116,16 @@ function App() {
     await window.microslop?.pauseCapture();
     await pauseCapture().catch((): null => null);
     setSettings((current) => ({ ...current, captureEnabled: false }));
-    setMessage('Capture paused.');
+    log('Capture paused');
   };
 
   const captureNow = async () => {
     try {
       const result = await window.microslop?.captureNow();
-      setMessage(`Manual capture result: ${JSON.stringify(result)}`);
+      log(`Manual capture: ${JSON.stringify(result)}`);
       void refresh();
     } catch (error) {
-      setMessage(`Capture failed. Check screen recording permission. ${String(error)}`);
-    }
-  };
-
-  const runSearch = async () => {
-    setAnswer('');
-    const response = await searchMemories(query, filters, mode);
-    setResults(response.results);
-    if (response.results.length) {
-      const generated = await generateAnswer(query, response.results.map((result) => result.snapshotId));
-      setAnswer(generated.status === 'ok' ? generated.answer : generated.error || 'Answer generation failed. Search results are still shown.');
+      log(`Capture failed. Check screen recording permission. ${String(error)}`, 'error');
     }
   };
 
@@ -154,15 +151,19 @@ function App() {
     }
 
     setSending(true);
+    log(`Search: "${question}"`);
     try {
-      const response = await searchMemories(question, filters, mode);
+      const response = await searchMemories(question, SEARCH_FILTERS, SEARCH_MODE);
+      log(`Retrieved ${response.results.length} memories`);
       let content = 'No matching memories found.';
       if (response.results.length) {
         const generated = await generateAnswer(question, response.results.map((result) => result.snapshotId));
         content = generated.status === 'ok' ? generated.answer : generated.error || 'Answer generation failed.';
+        log(generated.status === 'ok' ? `Answer generated (${settings.cerebrasModel})` : `Answer failed: ${generated.error || 'unknown error'}`, generated.status === 'ok' ? 'info' : 'error');
       }
       appendMessage(chatId, { role: 'assistant', content, results: response.results });
     } catch (error) {
+      log(`Request failed. ${String(error)}`, 'error');
       appendMessage(chatId, { role: 'assistant', content: `Request failed. ${String(error)}` });
     } finally {
       setSending(false);
@@ -196,6 +197,7 @@ function App() {
   const changeModel = (model: string) => {
     setSettings((current) => ({ ...current, cerebrasModel: model }));
     void updateSettings({ ...settings, cerebrasModel: model }).catch((): null => null);
+    log(`Model set to ${model}`);
   };
 
   const onAttach = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -211,13 +213,13 @@ function App() {
   const saveSettings = async () => {
     const updated = await updateSettings(settings);
     setSettings(updated);
-    setMessage('Settings saved. Set CEREBRAS_API_KEY in the backend environment to enable answers.');
+    log('Settings saved');
   };
 
   const confirmDelete = async (label: string, action: () => Promise<{ deleted: number }>) => {
     if (!window.confirm(`${label}? This deletes local memories, screenshots, thumbnails, and vectors.`)) return;
     const result = await action();
-    setMessage(`Deleted ${result.deleted} memories.`);
+    log(`${label}: deleted ${result.deleted} memories`);
     void refresh();
   };
 
@@ -293,6 +295,13 @@ function App() {
             </button>
           </div>
 
+          <button className="history-new" onClick={newChat} title="New chat"><SquarePen size={18} /> <span>New chat</span></button>
+
+          <button className={`record-btn${settings.captureEnabled ? ' recording' : ''}`} onClick={toggleRecording} title={settings.captureEnabled ? 'Stop recording' : 'Start recording'}>
+            {settings.captureEnabled ? <MonitorStop size={18} /> : <MonitorPlay size={18} />}
+            <span>{settings.captureEnabled ? 'Stop recording' : 'Start recording'}</span>
+          </button>
+
           <nav className="nav-items">
             {NAV.map(({ id, label, Icon }) => (
               <button key={id} className={page === id ? 'nav active' : 'nav'} onClick={() => { setPage(id); setSidebarOpen(false); }} title={label}>
@@ -301,13 +310,6 @@ function App() {
               </button>
             ))}
           </nav>
-
-          <button className="history-new" onClick={newChat} title="New chat"><SquarePen size={16} /> <span>New chat</span></button>
-
-          <button className={`record-btn${settings.captureEnabled ? ' recording' : ''}`} onClick={toggleRecording} title={settings.captureEnabled ? 'Stop recording' : 'Start recording'}>
-            {settings.captureEnabled ? <MonitorStop size={16} /> : <MonitorPlay size={16} />}
-            <span>{settings.captureEnabled ? 'Stop recording' : 'Start recording'}</span>
-          </button>
 
           <div className="history-list">
             {chats.length === 0 && <p className="history-empty">No chats yet.</p>}
@@ -325,8 +327,6 @@ function App() {
       </aside>
 
       <section className="content">
-        {message && <div className="banner">{message}</div>}
-
         {page === 'dashboard' && messages.length === 0 && (
           <section className="home">
             <div className="composer-wrap">
@@ -362,79 +362,97 @@ function App() {
           </section>
         )}
 
-        {page === 'search' && (
-          <section className="panel">
-            <h2>Search</h2>
-            <div className="searchbar">
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="what was I reading earlier?" />
-              <select value={mode} onChange={(event) => setMode(event.target.value)}><option>text</option><option>visual</option><option>hybrid</option></select>
-              <button onClick={runSearch} disabled={!query}>Search</button>
-            </div>
-            <div className="filters">
-              <input placeholder="App name" value={filters.appName} onChange={(e) => setFilters({ ...filters, appName: e.target.value })} />
-              <input placeholder="Window title" value={filters.windowTitle} onChange={(e) => setFilters({ ...filters, windowTitle: e.target.value })} />
-            </div>
-            {answer && <article className="answer"><h3>Answer</h3><p>{answer}</p></article>}
-            <div className="results">
-              {results.map((result) => (
-                <article className="result" key={result.snapshotId}>
-                  {result.thumbnailPath && <img src={fileUrl(result.thumbnailPath)} />}
-                  <div><strong>{prettyTime(result.timestamp)}</strong><p>{result.appName || 'Unknown app'} / {result.windowTitle || 'Untitled'}</p><p>{result.ocrSnippet}</p><span>{result.matchType} score {result.score}</span></div>
-                  <button className="ghost" onClick={() => setPreview(result)}>Preview</button>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
         {page === 'settings' && (
-          <section className="panel form-panel">
-            <h2>Settings</h2>
-            {backendError && <div className="banner bad settings-error">{backendError}</div>}
-            <div className="status-card settings-status">
-              <div className="pills">
-                <Pill label="SQLite" value={status?.sqlite || 'unknown'} />
-                <Pill label="LanceDB" value={status?.lancedb || 'unknown'} />
-                <Pill label="Cerebras" value={status?.llm || 'unknown'} />
-                <Pill label="OCR" value={status?.ocr || 'unknown'} />
-              </div>
-              <dl>
-                <dt>Capture</dt><dd>{settings.captureEnabled ? 'Running' : 'Paused'}</dd>
-                <dt>Today</dt><dd>{status?.captureStats.snapshotsToday || 0} snapshots</dd>
-                <dt>Last capture</dt><dd>{prettyTime(status?.captureStats.lastCapturedAt)}</dd>
-                <dt>Storage</dt><dd>{prettyBytes(status?.captureStats.storageUsedBytes)}</dd>
-              </dl>
-              <div className="actions">
-                <button onClick={startCapture}>Start capture</button>
-                <button className="secondary" onClick={pause}>Pause capture</button>
-                <button className="secondary" onClick={captureNow}>Capture now</button>
-              </div>
-            </div>
-            <label>Capture interval seconds<input type="number" value={settings.captureIntervalSeconds} onChange={(e) => setSettings({ ...settings, captureIntervalSeconds: Number(e.target.value) })} /></label>
-            <label>Retention days<input type="number" value={settings.retentionDays} onChange={(e) => setSettings({ ...settings, retentionDays: Number(e.target.value) })} /></label>
-            <label>Backend URL<input value={settings.backendUrl} readOnly /></label>
-            <label>Cerebras model<input value={settings.cerebrasModel} onChange={(e) => setSettings({ ...settings, cerebrasModel: e.target.value })} /></label>
-            <label>Text embedding model<input value={settings.textEmbeddingModel} onChange={(e) => setSettings({ ...settings, textEmbeddingModel: e.target.value })} /></label>
-            <label>Image embedding model<input value={settings.imageEmbeddingModel} onChange={(e) => setSettings({ ...settings, imageEmbeddingModel: e.target.value })} /></label>
-            <label className="check"><input type="checkbox" checked={settings.enableOCR} onChange={(e) => setSettings({ ...settings, enableOCR: e.target.checked })} /> Enable OCR</label>
-            <label className="check"><input type="checkbox" checked={settings.enableImageEmbeddings} onChange={(e) => setSettings({ ...settings, enableImageEmbeddings: e.target.checked })} /> Enable image embeddings</label>
-            <label>Excluded apps<textarea value={settings.excludedApps.join('\n')} onChange={(e) => setSettings({ ...settings, excludedApps: e.target.value.split('\n') })} /></label>
-            <label>Excluded window title patterns<textarea value={settings.excludedWindowTitlePatterns.join('\n')} onChange={(e) => setSettings({ ...settings, excludedWindowTitlePatterns: e.target.value.split('\n') })} /></label>
-            <p>Storage: {settings.storagePath}</p>
-            <div className="actions"><button onClick={saveSettings}>Save settings</button><button className="ghost" onClick={() => window.microslop?.openDataFolder()}>Open data folder</button></div>
-          </section>
-        )}
+          <section className="settings">
+            <div className="settings-wrap">
+              <header className="settings-top">
+                <h2>Settings</h2>
+                <div className="settings-top-actions">
+                  <button className="ghost" onClick={() => window.microslop?.openDataFolder()}>Open data folder</button>
+                  <button onClick={saveSettings}>Save</button>
+                </div>
+              </header>
 
-        {page === 'privacy' && (
-          <section className="panel privacy-panel">
-            <h2>Privacy</h2>
-            <p>Everything stays local in {settings.storagePath || 'app-data'}. Screenshots, OCR text, vectors, and metadata are never sent to cloud APIs.</p>
-            <div className="actions"><button onClick={pause}>Pause capture</button><button className="secondary" onClick={startCapture}>Resume capture</button></div>
-            <div className="danger-zone">
-              <button onClick={() => confirmDelete('Delete last 15 minutes', deleteLast15Minutes)}>Delete last 15 minutes</button>
-              <button onClick={() => confirmDelete('Delete last hour', deleteLastHour)}>Delete last hour</button>
-              <button onClick={() => confirmDelete('Delete today', deleteToday)}>Delete today</button>
-              <button className="danger" onClick={() => confirmDelete('Delete all data', deleteAllData)}>Delete all data</button>
+              <section className="settings-card">
+                <h3>Status</h3>
+                <div className="settings-rows">
+                  <div className="srow"><span>Capture</span><span className="srow-val">{settings.captureEnabled ? 'Running' : 'Paused'}</span></div>
+                  <div className="srow"><span>Snapshots today</span><span className="srow-val">{status?.captureStats.snapshotsToday || 0}</span></div>
+                  <div className="srow"><span>Last capture</span><span className="srow-val">{prettyTime(status?.captureStats.lastCapturedAt)}</span></div>
+                  <div className="srow"><span>Storage used</span><span className="srow-val">{prettyBytes(status?.captureStats.storageUsedBytes)}</span></div>
+                </div>
+                <div className="settings-actions">
+                  <button onClick={startCapture}>Start capture</button>
+                  <button className="secondary" onClick={pause}>Pause</button>
+                  <button className="secondary" onClick={captureNow}>Capture now</button>
+                </div>
+              </section>
+
+              <section className="settings-card">
+                <h3>Capture</h3>
+                <div className="settings-rows">
+                  <label className="srow"><span>Capture interval (seconds)</span><input type="number" value={settings.captureIntervalSeconds} onChange={(e) => setSettings({ ...settings, captureIntervalSeconds: Number(e.target.value) })} /></label>
+                  <label className="srow"><span>Retention (days)</span><input type="number" value={settings.retentionDays} onChange={(e) => setSettings({ ...settings, retentionDays: Number(e.target.value) })} /></label>
+                  <label className="srow toggle"><span>Enable OCR</span><input type="checkbox" checked={settings.enableOCR} onChange={(e) => setSettings({ ...settings, enableOCR: e.target.checked })} /></label>
+                  <label className="srow toggle"><span>Enable image embeddings</span><input type="checkbox" checked={settings.enableImageEmbeddings} onChange={(e) => setSettings({ ...settings, enableImageEmbeddings: e.target.checked })} /></label>
+                </div>
+              </section>
+
+              <section className="settings-card">
+                <h3>Models</h3>
+                <div className="settings-rows">
+                  <label className="srow"><span>Cerebras model</span><input value={settings.cerebrasModel} onChange={(e) => setSettings({ ...settings, cerebrasModel: e.target.value })} /></label>
+                  <label className="srow"><span>Text embedding model</span><input value={settings.textEmbeddingModel} onChange={(e) => setSettings({ ...settings, textEmbeddingModel: e.target.value })} /></label>
+                  <label className="srow"><span>Image embedding model</span><input value={settings.imageEmbeddingModel} onChange={(e) => setSettings({ ...settings, imageEmbeddingModel: e.target.value })} /></label>
+                </div>
+              </section>
+
+              <section className="settings-card">
+                <h3>Exclusions</h3>
+                <p className="settings-hint">Apps and window-title keywords to skip while capturing. One per line.</p>
+                <label className="sfield"><span>Excluded apps</span><textarea value={settings.excludedApps.join('\n')} onChange={(e) => setSettings({ ...settings, excludedApps: e.target.value.split('\n') })} /></label>
+                <label className="sfield"><span>Excluded window title patterns</span><textarea value={settings.excludedWindowTitlePatterns.join('\n')} onChange={(e) => setSettings({ ...settings, excludedWindowTitlePatterns: e.target.value.split('\n') })} /></label>
+              </section>
+
+              <section className="settings-card">
+                <h3>Connection</h3>
+                <div className="settings-rows">
+                  <label className="srow"><span>Backend URL</span><input value={settings.backendUrl} readOnly /></label>
+                  <div className="srow"><span>Storage path</span><span className="srow-val mono">{settings.storagePath || 'app-data'}</span></div>
+                </div>
+              </section>
+
+              <section className="settings-card">
+                <h3>Privacy &amp; data</h3>
+                <p className="settings-hint">Capture, OCR, embeddings, and vectors stay local. Answer generation sends the question and retrieved OCR text to the Cerebras API.</p>
+                <div className="danger-zone">
+                  <button onClick={() => confirmDelete('Delete last 15 minutes', deleteLast15Minutes)}>Delete last 15 minutes</button>
+                  <button onClick={() => confirmDelete('Delete last hour', deleteLastHour)}>Delete last hour</button>
+                  <button onClick={() => confirmDelete('Delete today', deleteToday)}>Delete today</button>
+                  <button className="danger" onClick={() => confirmDelete('Delete all data', deleteAllData)}>Delete all data</button>
+                </div>
+              </section>
+
+              <section className={`settings-card logs-card${logsOpen ? ' open' : ''}`}>
+                <button className="logs-head" onClick={() => setLogsOpen((value) => !value)}>
+                  <span className="logs-title"><Terminal size={14} /> Logs <span className="logs-count">{logs.length}</span></span>
+                  <span className="logs-actions">
+                    {logs.length > 0 && <span className="logs-clear" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setLogs([]); }}>clear</span>}
+                    <ChevronDown size={16} className="logs-chevron" />
+                  </span>
+                </button>
+                {logsOpen && (
+                  <div className="logs-body" ref={logBodyRef}>
+                    {logs.length === 0 && <div className="log-empty">No activity yet.</div>}
+                    {logs.map((entry, index) => (
+                      <div className={`log-line ${entry.level}`} key={index}>
+                        <span className="log-time">{entry.time}</span>
+                        <span className="log-text">{entry.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
           </section>
         )}
