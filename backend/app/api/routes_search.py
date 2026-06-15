@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.settings import get_app_settings
 from app.db.sqlite_db import get_snapshots
 from app.schemas.search import AnswerRequest, SearchRequest
-from app.services.ollama_service import generate_answer_with_gemma
+from app.services.llm_service import generate_answer
 from app.services.search_service import search_memories
 
 router = APIRouter()
@@ -25,6 +25,6 @@ def answer(request: AnswerRequest):
     settings = get_app_settings()
     memories = get_snapshots(request.memoryIds)
     try:
-        return {"answer": generate_answer_with_gemma(request.question, memories, settings["ollamaModel"]), "status": "ok"}
+        return {"answer": generate_answer(request.question, memories, settings["cerebrasModel"]), "status": "ok"}
     except Exception as exc:
         return {"answer": "", "status": "error", "error": str(exc)}

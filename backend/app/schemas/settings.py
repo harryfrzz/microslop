@@ -9,8 +9,8 @@ class Settings(BaseModel):
     captureIntervalSeconds: int = Field(default=10, ge=2)
     retentionDays: int = Field(default=30, ge=1)
     backendUrl: Optional[str] = None
-    ollamaModel: str = "gemma4:e2b"
-    textEmbeddingModel: str = "nomic-embed-text"
+    cerebrasModel: str = "llama-3.3-70b"
+    textEmbeddingModel: str = "BAAI/bge-small-en-v1.5"
     imageEmbeddingModel: str = "sentence-transformers/clip-ViT-B-32"
     enableOCR: bool = True
     enableImageEmbeddings: bool = True

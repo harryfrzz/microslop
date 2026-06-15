@@ -5,12 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 BACKEND_HOST="${MICROSLOP_BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${MICROSLOP_BACKEND_PORT:-8765}"
-OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-OLLAMA_MODEL="${OLLAMA_MODEL:-gemma4:e2b}"
-TEXT_EMBEDDING_MODEL="${TEXT_EMBEDDING_MODEL:-nomic-embed-text}"
+CEREBRAS_API_KEY="${CEREBRAS_API_KEY:-}"
+CEREBRAS_MODEL="${CEREBRAS_MODEL:-llama-3.3-70b}"
 
 BACKEND_PID=""
-OLLAMA_PID=""
 
 log() {
   printf '\n==> %s\n' "$1"
@@ -23,9 +21,6 @@ have() {
 cleanup() {
   if [ -n "$BACKEND_PID" ] && kill -0 "$BACKEND_PID" >/dev/null 2>&1; then
     kill "$BACKEND_PID" >/dev/null 2>&1 || true
-  fi
-  if [ -n "$OLLAMA_PID" ] && kill -0 "$OLLAMA_PID" >/dev/null 2>&1; then
-    kill "$OLLAMA_PID" >/dev/null 2>&1 || true
   fi
 }
 
@@ -78,29 +73,12 @@ install_tesseract() {
   esac
 }
 
-install_ollama() {
-  if have ollama; then
-    log "Ollama already installed"
-    return
+check_cerebras_key() {
+  if [ -z "$CEREBRAS_API_KEY" ]; then
+    printf '\nCEREBRAS_API_KEY is not set. Answer generation will fail until you export it.\nGet a key at https://cloud.cerebras.ai and rerun, or set it in your shell profile.\n' >&2
+  else
+    log "Cerebras API key detected"
   fi
-
-  log "Installing Ollama"
-  case "$(uname -s)" in
-    Darwin)
-      if ! have brew; then
-        printf 'Homebrew is required to install Ollama on macOS: https://brew.sh\n' >&2
-        exit 1
-      fi
-      brew install ollama
-      ;;
-    Linux)
-      curl -fsSL https://ollama.com/install.sh | sh
-      ;;
-    *)
-      printf 'Unsupported OS for automatic Ollama install. Install it manually, then rerun.\n' >&2
-      exit 1
-      ;;
-  esac
 }
 
 python_bin() {
@@ -161,35 +139,14 @@ setup_frontend() {
   npm --prefix "$ROOT_DIR" install
 }
 
-start_ollama() {
-  if curl -fsS "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then
-    log "Ollama already running"
-    return
-  fi
-
-  log "Starting Ollama"
-  ollama serve &
-  OLLAMA_PID="$!"
-  wait_for_url "$OLLAMA_URL/api/tags" "Ollama"
-}
-
-pull_models() {
-  log "Pulling Ollama embedding model: $TEXT_EMBEDDING_MODEL"
-  ollama pull "$TEXT_EMBEDDING_MODEL"
-
-  log "Pulling Ollama chat model: $OLLAMA_MODEL"
-  if ! ollama pull "$OLLAMA_MODEL"; then
-    printf '\nCould not pull %s. Install a supported Ollama chat model and update Settings.\n' "$OLLAMA_MODEL" >&2
-  fi
-}
-
 start_backend() {
   log "Starting FastAPI backend on $BACKEND_HOST:$BACKEND_PORT"
   (
     cd "$BACKEND_DIR"
     MICROSLOP_BACKEND_HOST="$BACKEND_HOST" \
       MICROSLOP_BACKEND_PORT="$BACKEND_PORT" \
-      OLLAMA_URL="$OLLAMA_URL" \
+      CEREBRAS_API_KEY="$CEREBRAS_API_KEY" \
+      CEREBRAS_MODEL="$CEREBRAS_MODEL" \
       exec ./.venv/bin/uvicorn main:app --host "$BACKEND_HOST" --port "$BACKEND_PORT" --reload
   ) &
   BACKEND_PID="$!"
@@ -202,10 +159,8 @@ run_app() {
 }
 
 install_tesseract
-install_ollama
 setup_backend
 setup_frontend
-start_ollama
-pull_models
+check_cerebras_key
 start_backend
 run_app

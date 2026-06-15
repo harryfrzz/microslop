@@ -1,6 +1,6 @@
 # microslop local backend
 
-FastAPI service for local screenshot memory indexing and search. It owns OCR, embeddings, SQLite metadata, LanceDB vectors, ranking, privacy deletion, and Ollama answer generation.
+FastAPI service for local screenshot memory indexing and search. It owns OCR, embeddings, SQLite metadata, LanceDB vectors, ranking, privacy deletion, and answer generation through the Cerebras inference API.
 
 ## Setup
 
@@ -22,15 +22,15 @@ brew install tesseract
 sudo apt install tesseract-ocr
 ```
 
-## Ollama
+## LLM (Cerebras)
+
+Answers run on the Cerebras inference API. Export your key before starting:
 
 ```bash
-ollama serve
-ollama pull gemma4:e2b
-ollama pull nomic-embed-text
+export CEREBRAS_API_KEY=csk-...
 ```
 
-If `gemma4:e2b` is not available in your Ollama setup, install the local model you want and update the model name in Settings.
+Model defaults to `llama-3.3-70b` (override via Settings or `CEREBRAS_MODEL`). Text embeddings use `BAAI/bge-small-en-v1.5` via sentence-transformers, downloaded automatically on first use.
 
 ## Data
 
@@ -44,4 +44,4 @@ app-data/
   thumbnails/YYYY-MM-DD/
 ```
 
-Set `MICROSLOP_DATA_DIR` to override the storage location. Set `MICROSLOP_BACKEND_PORT` or `OLLAMA_URL` if your local ports differ.
+Set `MICROSLOP_DATA_DIR` to override the storage location. Set `MICROSLOP_BACKEND_PORT` if your local port differs, and `CEREBRAS_API_KEY` / `CEREBRAS_MODEL` / `CEREBRAS_URL` to configure the LLM.

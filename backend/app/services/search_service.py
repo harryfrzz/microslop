@@ -4,7 +4,7 @@ from app.core.settings import get_app_settings
 from app.db.sqlite_db import get_snapshots
 from app.services.image_embedding_service import embed_visual_query
 from app.services.lancedb_service import search_table
-from app.services.ollama_service import embed_text
+from app.services.text_embedding_service import embed_text
 from app.services.ranking_service import combine
 
 

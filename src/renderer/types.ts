@@ -30,7 +30,7 @@ export type Settings = {
   captureIntervalSeconds: number;
   retentionDays: number;
   backendUrl: string;
-  ollamaModel: string;
+  cerebrasModel: string;
   textEmbeddingModel: string;
   imageEmbeddingModel: string;
   enableOCR: boolean;
@@ -44,7 +44,7 @@ export type Status = {
   backend: string;
   sqlite: string;
   lancedb: string;
-  ollama: string;
+  llm: string;
   ocr: string;
   captureStats: {
     snapshotsToday: number;

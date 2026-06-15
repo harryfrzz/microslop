@@ -7,6 +7,6 @@ class StatusResponse(BaseModel):
     backend: str
     sqlite: str
     lancedb: str
-    ollama: str
+    llm: str
     ocr: str
     captureStats: dict
