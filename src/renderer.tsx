@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ArrowUp, ChevronDown, House, MessageSquare, MonitorPlay, MonitorStop, PanelLeft, Paperclip, Plug, Settings as SettingsIcon, SquarePen, Terminal, Trash2 } from 'lucide-react';
+import { ArrowUp, Calendar, Check, ChevronDown, Database, Download, FolderGit2, HardDrive, House, LogIn, Mail, MessageSquare, Minus, MonitorPlay, MonitorStop, NotebookText, PanelLeft, Paperclip, Plug, Plus, Settings as SettingsIcon, SquareKanban, SquarePen, Terminal, Trash2, User } from 'lucide-react';
 import './index.css';
 import {
   deleteAllData,
@@ -21,6 +21,7 @@ type ChatMessage = { role: 'user' | 'assistant'; content: string; results?: Sear
 type Chat = { id: string; title: string; messages: ChatMessage[] };
 type LogLevel = 'info' | 'error';
 type LogEntry = { time: string; level: LogLevel; text: string };
+type Connector = { id: string; name: string; description: string; Icon: typeof Plug };
 
 const blankSettings: Settings = {
   captureEnabled: false,
@@ -37,21 +38,116 @@ const blankSettings: Settings = {
 };
 
 const MODEL_OPTIONS = ['llama-3.3-70b', 'llama3.1-8b', 'llama-4-scout-17b-16e-instruct', 'qwen-3-32b'];
+const TEXT_EMBED_OPTIONS = ['BAAI/bge-small-en-v1.5', 'BAAI/bge-base-en-v1.5', 'sentence-transformers/all-MiniLM-L6-v2', 'nomic-ai/nomic-embed-text-v1.5'];
+const IMAGE_EMBED_OPTIONS = ['sentence-transformers/clip-ViT-B-32', 'sentence-transformers/clip-ViT-L-14', 'openai/clip-vit-base-patch32'];
+
+const CONNECTORS: Connector[] = [
+  { id: 'notion', name: 'Notion', description: 'Search pages and databases from your workspace.', Icon: NotebookText },
+  { id: 'slack', name: 'Slack', description: 'Pull messages and threads from your channels.', Icon: MessageSquare },
+  { id: 'github', name: 'GitHub', description: 'Read issues, PRs, and repository files.', Icon: FolderGit2 },
+  { id: 'gdrive', name: 'Google Drive', description: 'Search documents and files in your Drive.', Icon: HardDrive },
+  { id: 'gmail', name: 'Gmail', description: 'Look up emails and threads from your inbox.', Icon: Mail },
+  { id: 'gcal', name: 'Google Calendar', description: 'Reference events and meeting details.', Icon: Calendar },
+  { id: 'linear', name: 'Linear', description: 'Fetch issues, projects, and cycles.', Icon: SquareKanban },
+  { id: 'postgres', name: 'Postgres', description: 'Query a connected database for context.', Icon: Database },
+];
 
 const SEARCH_MODE = 'hybrid';
 const SEARCH_FILTERS = { dateFrom: null, dateTo: null, appName: '', windowTitle: '' };
 
 const NAV = [
   { id: 'dashboard', label: 'Home', Icon: House },
+  { id: 'mcps', label: 'MCP', Icon: Plug },
   { id: 'settings', label: 'Settings', Icon: SettingsIcon },
 ] as const;
+
+const SETTINGS_TABS = [
+  { id: 'general', label: 'General' },
+  { id: 'models', label: 'Models' },
+  { id: 'privacy', label: 'Privacy' },
+  { id: 'logs', label: 'Logs' },
+] as const;
+
+type SettingsTab = (typeof SETTINGS_TABS)[number]['id'];
 
 const fileUrl = (path?: string) => (path ? `file://${path}` : undefined);
 const prettyBytes = (bytes = 0) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const prettyTime = (value?: string | null) => (value ? new Date(value).toLocaleString() : 'Never');
 
+type ModelSelectProps = {
+  value: string;
+  options: string[];
+  downloaded: string[];
+  downloading: string[];
+  onChange: (model: string) => void;
+  onAdd: (model: string) => void;
+  onDownload: (model: string) => void;
+};
+
+function ModelSelect({ value, options, downloaded, downloading, onChange, onAdd, onDownload }: ModelSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const commit = (action: (model: string) => void) => {
+    const id = draft.trim();
+    if (!id) return;
+    action(id);
+    onChange(id);
+    setDraft('');
+  };
+
+  return (
+    <div className={open ? 'model-dd open' : 'model-dd'} ref={ref}>
+      <button type="button" className="model-dd-trigger" onClick={() => setOpen((value) => !value)}>
+        <span className="model-dd-value">{value || 'Select a model'}</span>
+        <ChevronDown size={16} className="model-dd-caret" />
+      </button>
+      {open && (
+        <div className="model-dd-menu">
+          <div className="model-dd-list">
+            {options.map((option) => (
+              <button type="button" key={option} className={option === value ? 'model-dd-opt active' : 'model-dd-opt'} onClick={() => { onChange(option); setOpen(false); }}>
+                <span className="model-dd-opt-name">{option}</span>
+                {downloading.includes(option)
+                  ? <span className="model-dd-tag">Downloading…</span>
+                  : downloaded.includes(option) && <span className="model-dd-tag"><Check size={12} /> Local</span>}
+                {option === value && <Check size={14} className="model-dd-check" />}
+              </button>
+            ))}
+          </div>
+          <div className="model-dd-foot">
+            <input
+              className="model-dd-input"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commit(onAdd); } }}
+              placeholder="Add a custom model id…"
+            />
+            <div className="model-dd-foot-actions">
+              <button type="button" className="model-dd-action" disabled={!draft.trim()} onClick={() => commit(onAdd)}><Plus size={14} /> Add</button>
+              <button type="button" className="model-dd-action" disabled={!draft.trim()} onClick={() => commit(onDownload)}><Download size={14} /> Download</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
-  const [page, setPage] = useState<'dashboard' | 'settings'>('dashboard');
+  const [page, setPage] = useState<'dashboard' | 'settings' | 'mcps'>('dashboard');
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
+  const [captureField, setCaptureField] = useState<'interval' | 'retention'>('interval');
   const [status, setStatus] = useState<Status | null>(null);
   const [settings, setSettings] = useState<Settings>(blankSettings);
   const [query, setQuery] = useState('');
@@ -64,7 +160,13 @@ function App() {
   const [sending, setSending] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [logsOpen, setLogsOpen] = useState(true);
+  const [connected, setConnected] = useState<string[]>([]);
+  const [account, setAccount] = useState<{ name: string; email: string } | null>(null);
+  const [customModels, setCustomModels] = useState<string[]>([]);
+  const [customTextModels, setCustomTextModels] = useState<string[]>([]);
+  const [customImageModels, setCustomImageModels] = useState<string[]>([]);
+  const [downloadedModels, setDownloadedModels] = useState<string[]>([]);
+  const [downloadingModels, setDownloadingModels] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const logBodyRef = useRef<HTMLDivElement>(null);
@@ -81,7 +183,7 @@ function App() {
     try {
       const [nextStatus, nextSettings] = await Promise.all([getStatus(), getSettings()]);
       setStatus(nextStatus);
-      setSettings((current) => ({ ...current, ...nextSettings }));
+      setSettings((current) => ({ ...current, ...nextSettings, enableOCR: true, enableImageEmbeddings: true }));
       if (backendOk.current !== true) log('Backend connected on 127.0.0.1:8765');
       backendOk.current = true;
     } catch {
@@ -101,8 +203,8 @@ function App() {
   }, [messages, sending]);
 
   useEffect(() => {
-    if (logsOpen) logBodyRef.current?.scrollTo({ top: logBodyRef.current.scrollHeight });
-  }, [logs, logsOpen]);
+    if (page === 'settings' && settingsTab === 'logs') logBodyRef.current?.scrollTo({ top: logBodyRef.current.scrollHeight });
+  }, [logs, page, settingsTab]);
 
   const startCapture = async () => {
     await resumeCapture().catch((): null => null);
@@ -210,9 +312,65 @@ function App() {
     setAttachments((current) => current.filter((_, i) => i !== index));
   };
 
+  const toggleConnector = (connector: Connector) => {
+    setConnected((current) => {
+      const isOn = current.includes(connector.id);
+      log(isOn ? `${connector.name} disconnected` : `${connector.name} connected`);
+      return isOn ? current.filter((id) => id !== connector.id) : [...current, connector.id];
+    });
+  };
+
+  const startDownload = (model: string) => {
+    if (downloadedModels.includes(model) || downloadingModels.includes(model)) return;
+    setDownloadingModels((current) => [...current, model]);
+    log(`Downloading ${model}…`);
+    window.setTimeout(() => {
+      setDownloadingModels((current) => current.filter((id) => id !== model));
+      setDownloadedModels((current) => (current.includes(model) ? current : [...current, model]));
+      log(`Downloaded ${model}`);
+    }, 1500);
+  };
+
+  const modelFieldProps = (
+    field: 'cerebrasModel' | 'textEmbeddingModel' | 'imageEmbeddingModel',
+    base: string[],
+    custom: string[],
+    setCustom: React.Dispatch<React.SetStateAction<string[]>>,
+  ): ModelSelectProps => ({
+    value: settings[field],
+    options: Array.from(new Set([...base, ...custom, settings[field]].filter(Boolean))),
+    downloaded: downloadedModels,
+    downloading: downloadingModels,
+    onChange: (model) => setSettings((current) => ({ ...current, [field]: model })),
+    onAdd: (model) => {
+      setCustom((current) => (current.includes(model) ? current : [...current, model]));
+      log(`Added custom model ${model}`);
+    },
+    onDownload: (model) => {
+      setCustom((current) => (current.includes(model) ? current : [...current, model]));
+      startDownload(model);
+    },
+  });
+
+  const signIn = () => {
+    setAccount({ name: 'Hari Krishna', email: 'harikrishnac005@gmail.com' });
+    log('Signed in as harikrishnac005@gmail.com');
+  };
+
+  const signOut = () => {
+    setAccount(null);
+    log('Signed out');
+  };
+
+  const openMcpPage = () => {
+    setMcpOpen(false);
+    setSidebarOpen(false);
+    setPage('mcps');
+  };
+
   const saveSettings = async () => {
-    const updated = await updateSettings(settings);
-    setSettings(updated);
+    const updated = await updateSettings({ ...settings, enableOCR: true, enableImageEmbeddings: true });
+    setSettings({ ...updated, enableOCR: true, enableImageEmbeddings: true });
     log('Settings saved');
   };
 
@@ -221,6 +379,15 @@ function App() {
     const result = await action();
     log(`${label}: deleted ${result.deleted} memories`);
     void refresh();
+  };
+
+  const captureSpec = captureField === 'interval'
+    ? { key: 'captureIntervalSeconds' as const, unit: 'seconds', min: 1, max: 3600 }
+    : { key: 'retentionDays' as const, unit: 'days', min: 1, max: 3650 };
+  const captureValue = settings[captureSpec.key];
+  const setCaptureValue = (next: number) => {
+    const clamped = Math.min(captureSpec.max, Math.max(captureSpec.min, Number.isNaN(next) ? captureSpec.min : next));
+    setSettings((current) => ({ ...current, [captureSpec.key]: clamped }));
   };
 
   const renderComposer = () => (
@@ -261,8 +428,11 @@ function App() {
       </div>
       {mcpOpen && (
         <div className="mcp-panel">
-          <div className="mcp-head"><Plug size={14} /> MCP servers</div>
-          <p>No MCP servers configured. Connect a server to give answers extra tools and context.</p>
+          <div className="mcp-head"><Plug size={14} /> Connectors</div>
+          {connected.length === 0
+            ? <p>No connectors enabled. Connect an app to give answers extra tools and context.</p>
+            : <p>{connected.length} connector{connected.length === 1 ? '' : 's'} enabled.</p>}
+          <button className="mcp-link" onClick={openMcpPage}>Manage connectors</button>
         </div>
       )}
       <input ref={fileInputRef} type="file" multiple hidden onChange={onAttach} />
@@ -323,6 +493,23 @@ function App() {
               </div>
             ))}
           </div>
+
+          {account ? (
+            <div className="account-card">
+              <span className="account-avatar">{account.name.charAt(0).toUpperCase()}</span>
+              <span className="account-info">
+                <span className="account-name">{account.name}</span>
+                <span className="account-email">{account.email}</span>
+              </span>
+              <button className="account-action" onClick={signOut} title="Sign out" aria-label="Sign out"><User size={16} /></button>
+            </div>
+          ) : (
+            <button className="account-card signin" onClick={signIn} title="Sign in">
+              <span className="account-avatar empty"><User size={16} /></span>
+              <span className="account-info"><span className="account-name">Sign in</span><span className="account-email">Sync your account</span></span>
+              <LogIn size={16} className="account-chevron" />
+            </button>
+          )}
         </div>
       </aside>
 
@@ -373,75 +560,99 @@ function App() {
                 </div>
               </header>
 
-              <section className="settings-card">
-                <h3>Status</h3>
-                <div className="settings-rows">
-                  <div className="srow"><span>Capture</span><span className="srow-val">{settings.captureEnabled ? 'Running' : 'Paused'}</span></div>
-                  <div className="srow"><span>Snapshots today</span><span className="srow-val">{status?.captureStats.snapshotsToday || 0}</span></div>
-                  <div className="srow"><span>Last capture</span><span className="srow-val">{prettyTime(status?.captureStats.lastCapturedAt)}</span></div>
-                  <div className="srow"><span>Storage used</span><span className="srow-val">{prettyBytes(status?.captureStats.storageUsedBytes)}</span></div>
-                </div>
-                <div className="settings-actions">
-                  <button onClick={startCapture}>Start capture</button>
-                  <button className="secondary" onClick={pause}>Pause</button>
-                  <button className="secondary" onClick={captureNow}>Capture now</button>
-                </div>
-              </section>
+              <nav className="settings-tabs">
+                {SETTINGS_TABS.map(({ id, label }) => (
+                  <button key={id} className={settingsTab === id ? 'settings-tab active' : 'settings-tab'} onClick={() => setSettingsTab(id)}>{label}</button>
+                ))}
+              </nav>
 
-              <section className="settings-card">
-                <h3>Capture</h3>
-                <div className="settings-rows">
-                  <label className="srow"><span>Capture interval (seconds)</span><input type="number" value={settings.captureIntervalSeconds} onChange={(e) => setSettings({ ...settings, captureIntervalSeconds: Number(e.target.value) })} /></label>
-                  <label className="srow"><span>Retention (days)</span><input type="number" value={settings.retentionDays} onChange={(e) => setSettings({ ...settings, retentionDays: Number(e.target.value) })} /></label>
-                  <label className="srow toggle"><span>Enable OCR</span><input type="checkbox" checked={settings.enableOCR} onChange={(e) => setSettings({ ...settings, enableOCR: e.target.checked })} /></label>
-                  <label className="srow toggle"><span>Enable image embeddings</span><input type="checkbox" checked={settings.enableImageEmbeddings} onChange={(e) => setSettings({ ...settings, enableImageEmbeddings: e.target.checked })} /></label>
-                </div>
-              </section>
+              {settingsTab === 'general' && (
+                <>
+                  <section className="settings-card capture-card">
+                    <div className="capture-seg">
+                      <button type="button" className={captureField === 'interval' ? 'capture-seg-btn active' : 'capture-seg-btn'} onClick={() => setCaptureField('interval')}>Capture interval</button>
+                      <button type="button" className={captureField === 'retention' ? 'capture-seg-btn active' : 'capture-seg-btn'} onClick={() => setCaptureField('retention')}>Retention</button>
+                    </div>
+                    <div className="stepper">
+                      <button type="button" className="stepper-btn" onClick={() => setCaptureValue(captureValue - 1)} disabled={captureValue <= captureSpec.min} aria-label="Decrease"><Minus size={26} /></button>
+                      <div className="stepper-mid">
+                        <input className="stepper-num" type="number" value={captureValue} min={captureSpec.min} max={captureSpec.max} onChange={(e) => setCaptureValue(Number(e.target.value))} />
+                        <span className="stepper-unit">{captureSpec.unit}</span>
+                      </div>
+                      <button type="button" className="stepper-btn" onClick={() => setCaptureValue(captureValue + 1)} disabled={captureValue >= captureSpec.max} aria-label="Increase"><Plus size={26} /></button>
+                    </div>
+                  </section>
 
-              <section className="settings-card">
-                <h3>Models</h3>
-                <div className="settings-rows">
-                  <label className="srow"><span>Cerebras model</span><input value={settings.cerebrasModel} onChange={(e) => setSettings({ ...settings, cerebrasModel: e.target.value })} /></label>
-                  <label className="srow"><span>Text embedding model</span><input value={settings.textEmbeddingModel} onChange={(e) => setSettings({ ...settings, textEmbeddingModel: e.target.value })} /></label>
-                  <label className="srow"><span>Image embedding model</span><input value={settings.imageEmbeddingModel} onChange={(e) => setSettings({ ...settings, imageEmbeddingModel: e.target.value })} /></label>
-                </div>
-              </section>
+                  <section className="settings-card">
+                    <h3>Status</h3>
+                    <div className="settings-rows">
+                      <div className="srow"><span>Capture</span><span className="srow-val">{settings.captureEnabled ? 'Running' : 'Paused'}</span></div>
+                      <div className="srow"><span>Snapshots today</span><span className="srow-val">{status?.captureStats.snapshotsToday || 0}</span></div>
+                      <div className="srow"><span>Last capture</span><span className="srow-val">{prettyTime(status?.captureStats.lastCapturedAt)}</span></div>
+                      <div className="srow"><span>Storage used</span><span className="srow-val">{prettyBytes(status?.captureStats.storageUsedBytes)}</span></div>
+                    </div>
+                    <div className="settings-actions">
+                      <button onClick={startCapture}>Start capture</button>
+                      <button className="secondary" onClick={pause}>Pause</button>
+                      <button className="secondary" onClick={captureNow}>Capture now</button>
+                    </div>
+                  </section>
+                </>
+              )}
 
-              <section className="settings-card">
-                <h3>Exclusions</h3>
-                <p className="settings-hint">Apps and window-title keywords to skip while capturing. One per line.</p>
-                <label className="sfield"><span>Excluded apps</span><textarea value={settings.excludedApps.join('\n')} onChange={(e) => setSettings({ ...settings, excludedApps: e.target.value.split('\n') })} /></label>
-                <label className="sfield"><span>Excluded window title patterns</span><textarea value={settings.excludedWindowTitlePatterns.join('\n')} onChange={(e) => setSettings({ ...settings, excludedWindowTitlePatterns: e.target.value.split('\n') })} /></label>
-              </section>
+              {settingsTab === 'models' && (
+                <section className="settings-card">
+                  <h3>Models</h3>
+                  <div className="settings-rows">
+                    <div className="srow"><span>Cerebras model</span>
+                      <ModelSelect {...modelFieldProps('cerebrasModel', MODEL_OPTIONS, customModels, setCustomModels)} />
+                    </div>
+                    <div className="srow"><span>Text embedding model</span>
+                      <ModelSelect {...modelFieldProps('textEmbeddingModel', TEXT_EMBED_OPTIONS, customTextModels, setCustomTextModels)} />
+                    </div>
+                    <div className="srow"><span>Image embedding model</span>
+                      <ModelSelect {...modelFieldProps('imageEmbeddingModel', IMAGE_EMBED_OPTIONS, customImageModels, setCustomImageModels)} />
+                    </div>
+                  </div>
+                </section>
+              )}
 
-              <section className="settings-card">
-                <h3>Connection</h3>
-                <div className="settings-rows">
-                  <label className="srow"><span>Backend URL</span><input value={settings.backendUrl} readOnly /></label>
-                  <div className="srow"><span>Storage path</span><span className="srow-val mono">{settings.storagePath || 'app-data'}</span></div>
-                </div>
-              </section>
+              {settingsTab === 'privacy' && (
+                <>
+                  <section className="settings-card">
+                    <h3>Exclusions</h3>
+                    <p className="settings-hint">Apps and window-title keywords to skip while capturing. One per line.</p>
+                    <label className="sfield"><span>Excluded apps</span><textarea value={settings.excludedApps.join('\n')} onChange={(e) => setSettings({ ...settings, excludedApps: e.target.value.split('\n') })} /></label>
+                    <label className="sfield"><span>Excluded window title patterns</span><textarea value={settings.excludedWindowTitlePatterns.join('\n')} onChange={(e) => setSettings({ ...settings, excludedWindowTitlePatterns: e.target.value.split('\n') })} /></label>
+                  </section>
 
-              <section className="settings-card">
-                <h3>Privacy &amp; data</h3>
-                <p className="settings-hint">Capture, OCR, embeddings, and vectors stay local. Answer generation sends the question and retrieved OCR text to the Cerebras API.</p>
-                <div className="danger-zone">
-                  <button onClick={() => confirmDelete('Delete last 15 minutes', deleteLast15Minutes)}>Delete last 15 minutes</button>
-                  <button onClick={() => confirmDelete('Delete last hour', deleteLastHour)}>Delete last hour</button>
-                  <button onClick={() => confirmDelete('Delete today', deleteToday)}>Delete today</button>
-                  <button className="danger" onClick={() => confirmDelete('Delete all data', deleteAllData)}>Delete all data</button>
-                </div>
-              </section>
+                  <section className="settings-card">
+                    <h3>Connection</h3>
+                    <div className="settings-rows">
+                      <label className="srow"><span>Backend URL</span><input value={settings.backendUrl} readOnly /></label>
+                      <div className="srow"><span>Storage path</span><span className="srow-val mono">{settings.storagePath || 'app-data'}</span></div>
+                    </div>
+                  </section>
 
-              <section className={`settings-card logs-card${logsOpen ? ' open' : ''}`}>
-                <button className="logs-head" onClick={() => setLogsOpen((value) => !value)}>
-                  <span className="logs-title"><Terminal size={14} /> Logs <span className="logs-count">{logs.length}</span></span>
-                  <span className="logs-actions">
-                    {logs.length > 0 && <span className="logs-clear" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setLogs([]); }}>clear</span>}
-                    <ChevronDown size={16} className="logs-chevron" />
-                  </span>
-                </button>
-                {logsOpen && (
+                  <section className="settings-card">
+                    <h3>Data</h3>
+                    <p className="settings-hint">Capture, OCR, embeddings, and vectors stay local. Answer generation sends the question and retrieved OCR text to the Cerebras API.</p>
+                    <div className="danger-zone">
+                      <button onClick={() => confirmDelete('Delete last 15 minutes', deleteLast15Minutes)}>Delete last 15 minutes</button>
+                      <button onClick={() => confirmDelete('Delete last hour', deleteLastHour)}>Delete last hour</button>
+                      <button onClick={() => confirmDelete('Delete today', deleteToday)}>Delete today</button>
+                      <button className="danger" onClick={() => confirmDelete('Delete all data', deleteAllData)}>Delete all data</button>
+                    </div>
+                  </section>
+                </>
+              )}
+
+              {settingsTab === 'logs' && (
+                <section className="settings-card logs-card open">
+                  <div className="logs-head static">
+                    <span className="logs-title"><Terminal size={14} /> Logs <span className="logs-count">{logs.length}</span></span>
+                    {logs.length > 0 && <span className="logs-clear" role="button" tabIndex={0} onClick={() => setLogs([])}>clear</span>}
+                  </div>
                   <div className="logs-body" ref={logBodyRef}>
                     {logs.length === 0 && <div className="log-empty">No activity yet.</div>}
                     {logs.map((entry, index) => (
@@ -451,8 +662,40 @@ function App() {
                       </div>
                     ))}
                   </div>
-                )}
-              </section>
+                </section>
+              )}
+            </div>
+          </section>
+        )}
+
+        {page === 'mcps' && (
+          <section className="settings">
+            <div className="settings-wrap">
+              <header className="settings-top">
+                <h2>Connectors</h2>
+                <span className="mcp-summary">{connected.length} connected</span>
+              </header>
+              <p className="settings-hint mcp-intro">Connect your apps over MCP to give answers extra tools and context. Everything stays on your machine until you run a query.</p>
+
+              <div className="connector-grid">
+                {CONNECTORS.map((connector) => {
+                  const { id, name, description, Icon } = connector;
+                  const isOn = connected.includes(id);
+                  return (
+                    <div className={isOn ? 'connector-card on' : 'connector-card'} key={id}>
+                      <div className="connector-top">
+                        <span className="connector-icon"><Icon size={20} /></span>
+                        {isOn && <span className="connector-badge"><Check size={12} /> Connected</span>}
+                      </div>
+                      <div className="connector-name">{name}</div>
+                      <p className="connector-desc">{description}</p>
+                      <button className={isOn ? 'connector-btn on' : 'connector-btn'} onClick={() => toggleConnector(connector)}>
+                        {isOn ? 'Disconnect' : 'Connect'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </section>
         )}
